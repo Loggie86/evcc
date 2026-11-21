@@ -87,6 +87,7 @@ type Site struct {
 
 	// battery settings
 	prioritySoc               float64  // prefer battery up to this Soc
+	batterySolarTargetSoc     float64  // optional forecast-driven desired home battery SoC by today's solar end
 	bufferSoc                 float64  // continue charging on battery above this Soc
 	bufferStartSoc            float64  // start charging on battery above this Soc
 	batteryDischargeControl   bool     // prevent battery discharge for fast and planned charging
@@ -466,6 +467,11 @@ func (site *Site) restoreSettings() error {
 	}
 	if v, err := settings.Float(keys.PrioritySoc); err == nil {
 		if err := site.SetPrioritySoc(v); err != nil && !errors.Is(err, ErrBatteryNotConfigured) {
+			return err
+		}
+	}
+	if v, err := settings.Float(keys.BatterySolarTargetSoc); err == nil {
+		if err := site.SetBatterySolarTargetSoc(v); err != nil && !errors.Is(err, ErrBatteryNotConfigured) {
 			return err
 		}
 	}
@@ -1184,12 +1190,42 @@ type sitePowerResult struct {
 	// adjustment applied for battery priority below prioritySoc; adding it back
 	// restores the unadjusted site power for loadpoints prioritySoc does not apply to
 	priorityAdjustment float64
+
+	// A solar-end home-battery goal is stronger than optional EV battery
+	// boost and must not be silently bypassed by loadpoint priority rules.
+	batterySolarTargetActive bool
 }
 
 // sitePower calculates the site power balance from the measured state
 func (site *Site) sitePower(state siteState, totalChargePower, flexiblePower float64) sitePowerResult {
 	// ensure safe default for residual power
 	residualPower := site.GetResidualPower()
+
+	// The solar-end goal is distinct from normal battery priority. It
+	// reserves forecast-dependent battery charging *capacity*, while
+	// remaining surplus can still charge the vehicle.
+	targetSoc := site.GetBatterySolarTargetSoc()
+	plan := batterySolarPlan{Status: "disabled"}
+	if targetSoc > 0 && len(site.batteryMeters) > 0 {
+		homeLoadW := math.Max(500, state.gridPower+state.pvPower+state.battery.Power-totalChargePower)
+		var solar api.Rates
+		if site.tariffs != nil {
+			solar = currentRates(site.GetTariff(api.TariffUsageSolar))
+		}
+		plan = planBatterySolarTarget(time.Now(), targetSoc, state.battery.Soc,
+			state.battery.Capacity, homeLoadW, solar)
+	}
+	site.publish(keys.BatterySolarStatus, plan.Status)
+	site.publish(keys.BatterySolarReserveW, plan.ReserveW)
+	site.publish(keys.BatterySolarNeededKWh, plan.EnergyNeededWh/1000)
+	site.publish(keys.BatterySolarAvailableKWh, plan.ForecastNetWh/1000)
+	if plan.SolarEnd.IsZero() {
+		site.publish(keys.BatterySolarEnd, "")
+	} else {
+		site.publish(keys.BatterySolarEnd, plan.SolarEnd.Format(time.RFC3339))
+	}
+	activeTarget := targetSoc > 0 && state.battery.Soc < targetSoc &&
+		plan.Status != "disabled" && plan.Status != "reached"
 
 	site.RLock()
 	prioritySoc, bufferSoc, bufferStartSoc := site.prioritySoc, site.bufferSoc, site.bufferStartSoc
@@ -1205,7 +1241,7 @@ func (site *Site) sitePower(state siteState, totalChargePower, flexiblePower flo
 	var priorityAdjustment float64
 
 	hasBattery := len(site.batteryMeters) > 0
-	if hasBattery && state.battery.Soc < prioritySoc && residualPower <= 0 {
+	if hasBattery && (activeTarget || state.battery.Soc < prioritySoc) && residualPower <= 0 {
 		priorityAdjustment += residualPower - 100
 		residualPower = 100 // W
 	}
@@ -1226,8 +1262,20 @@ func (site *Site) sitePower(state siteState, totalChargePower, flexiblePower flo
 	var batteryBuffered, batteryStart bool
 
 	if hasBattery {
-		// if battery is charging below prioritySoc give it priority
-		if state.battery.Soc < prioritySoc && batteryPower < 0 {
+		if activeTarget {
+			// The goal shields a forecast-dependent portion of current battery
+			// charging. Never allow battery discharge to feed the EV while the
+			// goal is still unmet. Preserve priorityAdjustment so explicit
+			// battery boost loadpoints can reconstruct the original balance.
+			allowedShare := math.Max(0, -batteryPower-plan.ReserveW)
+			newBatteryPower := -allowedShare
+			priorityAdjustment += batteryPower - newBatteryPower + excessDCPower
+			batteryPower = newBatteryPower
+			excessDCPower = 0 // DC excess must not be offered to an AC charger
+			site.log.DEBUG.Printf("solar-end battery target %.0f%%: reserved %.0fW, EV battery share %.0fW (%s)",
+				targetSoc, plan.ReserveW, allowedShare, plan.Status)
+		} else if state.battery.Soc < prioritySoc && batteryPower < 0 {
+			// Existing fixed battery priority (unchanged when the goal is Off).
 			site.log.DEBUG.Printf("battery has priority at soc %.0f%% (< %.0f%%)", state.battery.Soc, prioritySoc)
 			priorityAdjustment += batteryPower + excessDCPower
 			batteryPower = 0
@@ -1250,11 +1298,12 @@ func (site *Site) sitePower(state siteState, totalChargePower, flexiblePower flo
 	site.log.DEBUG.Printf("site power: %.0fW"+flexStr, sitePower)
 
 	return sitePowerResult{
-		state:              state,
-		power:              sitePower,
-		batteryBuffered:    batteryBuffered,
-		batteryStart:       batteryStart,
-		priorityAdjustment: priorityAdjustment,
+		state:                    state,
+		power:                    sitePower,
+		batteryBuffered:          batteryBuffered,
+		batteryStart:             batteryStart,
+		priorityAdjustment:       priorityAdjustment,
+		batterySolarTargetActive: activeTarget,
 	}
 }
 
@@ -1293,7 +1342,7 @@ func (site *Site) loadpointSitePower(lp updater, res sitePowerResult) float64 {
 	// battery (#30541), nor to one the optimizer controls, since the optimizer plans the
 	// home battery: a stop gives the battery priority, a charge takes the surplus (#34606)
 	suggestion := lp.activeSuggestion()
-	if suggestion != nil || lp.GetBatteryBoost() != boostDisabled {
+	if !res.batterySolarTargetActive && (suggestion != nil || lp.GetBatteryBoost() != boostDisabled) {
 		sitePower += res.priorityAdjustment
 	}
 
@@ -1487,6 +1536,12 @@ func (site *Site) prepare() {
 	site.publish(keys.Ext, []api.Meter{})
 	site.publish(keys.Battery, nil)
 	site.publish(keys.PrioritySoc, site.prioritySoc)
+	site.publish(keys.BatterySolarTargetSoc, site.batterySolarTargetSoc)
+	site.publish(keys.BatterySolarReserveW, 0.0)
+	site.publish(keys.BatterySolarEnd, "")
+	site.publish(keys.BatterySolarStatus, "disabled")
+	site.publish(keys.BatterySolarNeededKWh, 0.0)
+	site.publish(keys.BatterySolarAvailableKWh, 0.0)
 	site.publish(keys.BufferSoc, site.bufferSoc)
 	site.publish(keys.BufferStartSoc, site.bufferStartSoc)
 	site.publish(keys.BatteryMode, site.batteryMode)

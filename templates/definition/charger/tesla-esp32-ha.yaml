@@ -1,0 +1,104 @@
+template: tesla-esp32-ha
+products:
+  - brand: Tesla Wall Connector
+    description:
+      generic: ESP32 Home Assistant bridge (Loggie86 fork)
+capabilities: ["dim"]
+group: generic
+requirements:
+  description:
+    en: >
+      Custom Tesla Wall Connector Gen3 controller using the existing ESP32
+      Neurio/RS485 firmware. Reads Home Assistant Tesla sensors. Charging
+      writes are disabled by default; enabling requires explicit HA authority,
+      a manual arming switch and a separately commissioned HA command relay.
+auth:
+  type: homeassistant
+  params: [uri, insecure]
+params:
+  - name: uri
+    example: http://homeassistant.local:8123
+    required: true
+    service: homeassistant/instances
+  - name: insecure
+  - name: connected
+    required: true
+    example: binary_sensor.charger_vehicle_connected
+    description:
+      en: Plug connected sensor
+      de: Fahrzeug angeschlossen
+    service: homeassistant/entities?uri={uri}&insecure={insecure}&domain=binary_sensor
+  - name: contactor
+    required: true
+    example: binary_sensor.charger_contactor_closed
+    description:
+      en: Contactor closed sensor
+      de: Schütz geschlossen
+    service: homeassistant/entities?uri={uri}&insecure={insecure}&domain=binary_sensor
+  - name: current
+    required: true
+    example: sensor.charger_vehicle_current
+    description:
+      en: Actual vehicle current in amperes
+      de: Tatsächlicher Fahrzeugladestrom in Ampere
+    service: homeassistant/entities?uri={uri}&insecure={insecure}&domain=sensor&unit=A
+  - name: power
+    advanced: true
+    example: sensor.charger_power
+    description:
+      en: Charger power sensor
+      de: Ladeleistungssensor
+    service: homeassistant/entities?uri={uri}&insecure={insecure}&domain=sensor&unit=kW,W
+  - name: energy
+    advanced: true
+    example: sensor.charger_energy
+    description:
+      en: Lifetime energy counter
+      de: Gesamtenergiezähler
+    service: homeassistant/entities?uri={uri}&insecure={insecure}&domain=sensor&unit=kWh,Wh
+  - name: control
+    type: bool
+    advanced: true
+    description:
+      en: Allow charging requests after commissioning
+      de: Ladebefehle nach Inbetriebnahme erlauben
+  - name: owner
+    advanced: true
+    example: input_select.evcc_esp32_authority
+    description:
+      en: HA charger authority entity
+      de: HA-Entität für die Ladehoheit
+  - name: ownerValue
+    advanced: true
+    example: evcc
+    description:
+      en: Required HA owner value
+      de: Erwarteter HA-Eigentümerwert
+  - name: armed
+    advanced: true
+    example: input_boolean.evcc_esp32_handover_armed
+    description:
+      en: Independently armed handover input boolean
+      de: Unabhängiger Freigabeschalter für die Übergabe
+  - name: request
+    advanced: true
+    example: input_text.evcc_esp32_request
+    description:
+      en: HA input_text lease request helper
+      de: HA input_text Befehlshelfer
+  - preset: charger-features
+render: |
+  type: tesla-esp32-ha
+  uri: {{ .uri }}
+  insecure: {{ .insecure }}
+  connected: {{ .connected }}
+  contactor: {{ .contactor }}
+  current: {{ .current }}
+  power: {{ .power }}
+  energy: {{ .energy }}
+  control: {{ .control }}
+  owner: {{ .owner }}
+  ownerValue: {{ .ownerValue }}
+  armed: {{ .armed }}
+  request: {{ .request }}
+  {{ include "features" . }}

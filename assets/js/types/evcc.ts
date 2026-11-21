@@ -313,6 +313,14 @@ export interface State {
   bufferSoc?: number;
   /** Battery priority SoC in %. Home battery is charged first while below this level. */
   prioritySoc?: number;
+  /** Target home-battery percentage by forecast solar end (0 disables). */
+  batterySolarTargetSoc?: number;
+  /** Solar charge power reserved for the home battery in watts. */
+  batterySolarReserveW?: number;
+  batterySolarEnd?: string;
+  batterySolarStatus?: string;
+  batterySolarNeededKWh?: number;
+  batterySolarAvailableKWh?: number;
   /** Battery buffer start SoC in %. Solar charging starts automatically above this level. */
   bufferStartSoc?: number;
   /** Home battery discharge is prevented during fast charging and planned charging. */

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"math"
 	"slices"
 	"strings"
 	"time"
@@ -320,6 +321,33 @@ func (site *Site) SetPrioritySoc(soc float64) error {
 		site.publish(keys.PrioritySoc, site.prioritySoc)
 	}
 
+	return nil
+}
+
+// GetBatterySolarTargetSoc returns the optional forecast-driven solar-end target.
+func (site *Site) GetBatterySolarTargetSoc() float64 {
+	site.RLock()
+	defer site.RUnlock()
+	return site.batterySolarTargetSoc
+}
+
+// SetBatterySolarTargetSoc stores an explicit solar-end SoC goal. Zero turns
+// it off and retains the normal priority/buffer settings unchanged.
+func (site *Site) SetBatterySolarTargetSoc(soc float64) error {
+	if soc != 0 && (soc < 50 || soc > 100 || math.IsNaN(soc) ||
+		math.IsInf(soc, 0) || math.Mod(soc, 5) != 0) {
+		return errors.New("battery solar target must be Off or 50-100% in 5% increments")
+	}
+	site.Lock()
+	defer site.Unlock()
+	if len(site.batteryMeters) == 0 {
+		return ErrBatteryNotConfigured
+	}
+	if site.batterySolarTargetSoc != soc {
+		site.batterySolarTargetSoc = soc
+		settings.SetFloat(keys.BatterySolarTargetSoc, soc)
+		site.publish(keys.BatterySolarTargetSoc, soc)
+	}
 	return nil
 }
 

@@ -60,6 +60,8 @@ type API interface {
 	GetBatteryMaxDischargePower() *float64
 	GetPrioritySoc() float64
 	SetPrioritySoc(float64) error
+	GetBatterySolarTargetSoc() float64
+	SetBatterySolarTargetSoc(float64) error
 	GetBufferSoc() float64
 	SetBufferSoc(float64) error
 	GetBufferStartSoc() float64

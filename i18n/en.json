@@ -65,7 +65,18 @@
       "optimizerControlledHint": "Disabled for {loadpoints}. The {optimizer} decides instead.",
       "priority": "Home battery has priority while it is below {soc}. Then the charging points receive the surplus.",
       "priorityNone": "Solar surplus goes straight to the charging points. Set a value above {soc} to prioritize the home battery.",
-      "priorityTitle": "Where does the surplus go first?"
+      "priorityTitle": "Where does the surplus go first?",
+      "solarTargetTitle": "Battery target by solar end",
+      "solarTargetPrefix": "Aim for",
+      "solarTargetSuffix": "home battery charge by the end of today's forecast sunlight.",
+      "solarTargetOff": "Off",
+      "solarTargetDisabled": "Uses the usual battery priority and buffer settings.",
+      "solarTargetReached": "Target reached. Normal surplus charging is available to the car.",
+      "solarTargetShortfall": "Not enough solar forecast to meet this target. Prioritising the home battery.",
+      "solarTargetMissingForecast": "Solar forecast unavailable. Preserving the home battery's charging power.",
+      "solarTargetSunsetPassed": "Useful solar has ended for today. No home battery discharge for EV charging before reaching the target.",
+      "solarTargetWaiting": "Calculating available solar and home battery reserve.",
+      "solarTargetStatus": "Forecast solar finish {time}. Reserving about {reserve} kW for the home battery; the car may use the rest."
     },
     "optimizer": {
       "action": {

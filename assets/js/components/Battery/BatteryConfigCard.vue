@@ -75,6 +75,33 @@
 			</div>
 		</div>
 
+		<div class="d-flex gap-3 mb-4" data-testid="battery-solar-end-target">
+			<shopicon-regular-sun
+				size="s"
+				class="text-primary flex-shrink-0 mt-1"
+			></shopicon-regular-sun>
+			<div>
+				<div class="fw-bold mb-1">
+					{{ $t("battery.config.solarTargetTitle") }}
+				</div>
+				<p class="mb-1">
+					{{ $t("battery.config.solarTargetPrefix") }}
+					<InlineSocSelect
+						id="batterySolarTarget"
+						:options="solarTargetOptions"
+						:selected="selectedSolarTargetSoc"
+						:label="solarTargetLabel"
+						nowrap
+						@change="changeSolarTarget"
+						/>
+					{{ $t("battery.config.solarTargetSuffix") }}
+				</p>
+				<p class="text-muted small mb-0" aria-live="polite">
+					{{ solarTargetSummary }}
+				</p>
+			</div>
+		</div>
+
 		<p
 			v-if="optimizerControlledTitles.length"
 			class="d-flex gap-3 text-muted small mb-0"
@@ -201,16 +228,62 @@ export default defineComponent({
 			default: () => [],
 		},
 		country: String,
+		solarTargetSoc: { type: Number, default: 0 },
+		solarReserveW: { type: Number, default: 0 },
+		solarTargetEnd: { type: String, default: "" },
+		solarTargetStatus: { type: String, default: "disabled" },
+		solarTargetNeededKWh: { type: Number, default: 0 },
+		solarTargetAvailableKWh: { type: Number, default: 0 },
 	},
 	data() {
 		return {
 			selectedBufferSoc: 100,
 			selectedPrioritySoc: 0,
 			selectedBufferStartSoc: 0,
+			selectedSolarTargetSoc: 0,
 		};
 	},
 	computed: {
 		// keep visible while enabled so it can be switched off
+        solarTargetOptions() {
+            const options = [{ value: 0, name: this.$t("battery.config.solarTargetOff") }];
+            for (let i = 50; i <= 100; i += 5) {
+                options.push({ value: i, name: this.fmtSoc(i) });
+            }
+            return options;
+        },
+        solarTargetLabel(): string {
+            return this.selectedSolarTargetSoc === 0
+                ? this.$t("battery.config.solarTargetOff").toString()
+                : this.fmtSoc(this.selectedSolarTargetSoc);
+        },
+        solarTargetSummary(): string {
+            if (this.selectedSolarTargetSoc === 0) {
+                return this.$t("battery.config.solarTargetDisabled").toString();
+            }
+            if (this.solarTargetStatus === "reached") {
+                return this.$t("battery.config.solarTargetReached").toString();
+            }
+            if (this.solarTargetStatus === "shortfall") {
+                return this.$t("battery.config.solarTargetShortfall").toString();
+            }
+            if (this.solarTargetStatus === "no-forecast") {
+                return this.$t("battery.config.solarTargetMissingForecast").toString();
+            }
+            if (this.solarTargetStatus === "solar-ended") {
+                return this.$t("battery.config.solarTargetSunsetPassed").toString();
+            }
+            if (!this.solarTargetEnd) {
+                return this.$t("battery.config.solarTargetWaiting").toString();
+            }
+            const solarEnd = new Date(this.solarTargetEnd);
+            const localTime = Number.isNaN(solarEnd.getTime()) ? "—"
+                : solarEnd.toLocaleTimeString(this.$i18n.locale, { hour: "numeric", minute: "2-digit" });
+            const reserve = (this.solarReserveW / 1000).toFixed(1);
+            return this.$t("battery.config.solarTargetStatus", {
+                time: localTime, reserve
+            }).toString();
+        },
 		gridDischargeVisible(): boolean {
 			const supported = (this.battery?.devices ?? []).some((d) =>
 				d.modes?.includes("discharge")
@@ -289,8 +362,25 @@ export default defineComponent({
 			},
 			immediate: true,
 		},
+        solarTargetSoc: {
+            handler(soc) {
+                this.selectedSolarTargetSoc = soc;
+            },
+            immediate: true,
+        },
 	},
 	methods: {
+        async changeSolarTarget($event: Event) {
+            const soc = parseInt(($event.target as HTMLInputElement).value, 10);
+            const previous = this.selectedSolarTargetSoc;
+            this.selectedSolarTargetSoc = soc;
+            try {
+                await api.post('batterysolartarget/' + encodeURIComponent(soc));
+            } catch (err) {
+                this.selectedSolarTargetSoc = previous;
+                console.error('Failed to save solar-end battery target', err);
+            }
+        },
 		changePrioritySoc($event: Event) {
 			const soc = parseInt(($event.target as HTMLInputElement).value, 10);
 			if (soc > (this.bufferSoc || 100)) {

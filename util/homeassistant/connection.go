@@ -1,6 +1,7 @@
 package homeassistant
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -91,6 +92,48 @@ func (c *Connection) GetState(entity string) (StateResponse, error) {
 	}
 
 	return res, nil
+}
+
+// GetAttribute returns an arbitrary Home Assistant state attribute as text.
+// Dotted attribute paths can traverse nested objects. Missing values fail.
+func (c *Connection) GetAttribute(entity, attribute string) (string, error) {
+	if attribute == "" {
+		return "", errors.New("missing attribute")
+	}
+
+	var res struct {
+		State      string         `json:"state"`
+		Attributes map[string]any `json:"attributes"`
+	}
+	uri := fmt.Sprintf("%s/api/states/%s", c.instance.URI(), url.PathEscape(entity))
+	if err := c.GetJSON(uri, &res); err != nil {
+		return "", err
+	}
+	if res.State == "unknown" || res.State == "unavailable" {
+		return "", api.ErrNotAvailable
+	}
+	var value any = res.Attributes
+	for _, part := range strings.Split(attribute, ".") {
+		object, ok := value.(map[string]any)
+		if !ok {
+			return "", fmt.Errorf("attribute %s not found for %s: %w", attribute, entity, api.ErrNotAvailable)
+		}
+		value, ok = object[part]
+		if !ok || value == nil {
+			return "", fmt.Errorf("attribute %s not found for %s: %w", attribute, entity, api.ErrNotAvailable)
+		}
+	}
+	switch v := value.(type) {
+	case string:
+		return v, nil
+	case bool:
+		return strconv.FormatBool(v), nil
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64), nil
+	default:
+		b, err := json.Marshal(v)
+		return string(b), err
+	}
 }
 
 // GetIntState retrieves the state of an entity as int64

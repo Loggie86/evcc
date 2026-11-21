@@ -93,6 +93,34 @@ func TestStatusMapExtendsBuiltin(t *testing.T) {
 	}
 }
 
+func TestGetAttribute(t *testing.T) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/states/sensor.alphaess_ev_decision", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"state":"Charging","attributes":{"levels":[8,16,24,32],"nested":{"target":24,"active":true},"reason":"Ready","null":null}}`)
+	}))
+	srv.Start()
+
+	conn := newTestConnection(srv.URL)
+	for _, tc := range []struct {
+		attr string
+		want string
+	}{
+		{"reason", "Ready"},
+		{"nested.target", "24"},
+		{"nested.active", "true"},
+		{"levels", "[8,16,24,32]"},
+	} {
+		got, err := conn.GetAttribute("sensor.alphaess_ev_decision", tc.attr)
+		require.NoError(t, err, tc.attr)
+		assert.Equal(t, tc.want, got)
+	}
+	for _, attr := range []string{"missing", "nested.missing", "null", "nested.target.foo"} {
+		_, err := conn.GetAttribute("sensor.alphaess_ev_decision", attr)
+		require.ErrorIs(t, err, api.ErrNotAvailable)
+	}
+}
+
 // TestCallSwitchService_DomainDispatch verifies that CallSwitchService picks
 // the correct service per Home Assistant domain — switches use turn_on /
 // turn_off, but the stateless button / input_button domains expose only
